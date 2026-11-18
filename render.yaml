@@ -1,0 +1,27 @@
+# Render Blueprint for a staging deployment: a Docker web service plus Postgres.
+# In Render: New → Blueprint → pick this repo. You'll be asked for ANTHROPIC_API_KEY.
+# Sign-up is closed (AEROVIA_ALLOW_SIGNUP=false): the first account you create
+# becomes the owner; nobody else can register until you open it.
+
+services:
+  - type: web
+    name: aerovia-staging
+    runtime: docker
+    region: singapore
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aerovia-staging-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AEROVIA_ENV
+        value: staging
+      - key: AEROVIA_ALLOW_SIGNUP
+        value: "false"
+
+databases:
+  - name: aerovia-staging-db
+    region: singapore
+    databaseName: aerovia

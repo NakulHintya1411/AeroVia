@@ -1,54 +1,44 @@
-"""Scenario persistence — module-level dict, no session_state dependency."""
-from dataclasses import asdict
+"""Scenario storage for the dashboard pages.
 
-SCENARIO_KEY = "aerovia_scenarios"
-MAX_SCENARIOS = 6
+Thin wrapper over `services.scenarios` that fills in the signed-in user's
+organisation, so pages keep calling `save_scenario(...)`, `list_scenarios()` etc.
+Scenarios live in the database and survive refreshes, sign-outs and restarts.
+"""
+from __future__ import annotations
 
-# Module-level store — persists for the lifetime of the Streamlit process
-_store: dict = {}
-
-
-def save_scenario(name: str, inputs_dict: dict, econ_dict: dict):
-    # Try session_state first (preferred), fall back to module dict
-    try:
-        import streamlit as st
-        if SCENARIO_KEY not in st.session_state:
-            st.session_state[SCENARIO_KEY] = {}
-        st.session_state[SCENARIO_KEY][name] = {"inputs": inputs_dict, "economics": econ_dict}
-        if len(st.session_state[SCENARIO_KEY]) > MAX_SCENARIOS:
-            oldest = next(iter(st.session_state[SCENARIO_KEY]))
-            del st.session_state[SCENARIO_KEY][oldest]
-    except Exception:
-        _store[name] = {"inputs": inputs_dict, "economics": econ_dict}
-        if len(_store) > MAX_SCENARIOS:
-            oldest = next(iter(_store))
-            del _store[oldest]
+from services import scenarios as _svc
+from services.scenarios import ScenarioError, ScenarioLimitReached  # noqa: F401  (re-exported)
 
 
-def _get_store() -> dict:
-    try:
-        import streamlit as st
-        if SCENARIO_KEY not in st.session_state:
-            st.session_state[SCENARIO_KEY] = {}
-        return st.session_state[SCENARIO_KEY]
-    except Exception:
-        return _store
+def _who() -> tuple[int, int]:
+    from dashboard.utils.auth import current_user
+
+    user = current_user()
+    if user is None:
+        raise RuntimeError("No signed-in user; call require_auth() first.")
+    return user.org_id, user.user_id
+
+
+def save_scenario(name: str, inputs_dict: dict, econ_dict: dict) -> None:
+    org_id, user_id = _who()
+    _svc.save(org_id, user_id, name, inputs_dict, econ_dict)
 
 
 def list_scenarios() -> list:
-    return list(_get_store().keys())
+    return _svc.list_names(_who()[0])
 
 
 def get_scenario(name: str) -> dict:
-    return _get_store().get(name, {})
+    return _svc.get(_who()[0], name)
 
 
-def delete_scenario(name: str):
-    store = _get_store()
-    if name in store:
-        del store[name]
+def delete_scenario(name: str) -> None:
+    _svc.remove(_who()[0], name)
+
+
+def clear_scenarios() -> None:
+    _svc.clear(_who()[0])
 
 
 def compare_scenarios(names: list) -> list:
-    store = _get_store()
-    return [{"name": n, **store[n]} for n in names if n in store]
+    return _svc.compare(_who()[0], names)

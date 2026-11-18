@@ -29,7 +29,7 @@ Built using real aviation economics frameworks, DGCA traffic data structures, an
 |--------|-------------|
 | **Route Builder** | Pick any origin → destination, aircraft type, frequency, load factor, and customize every cost assumption |
 | **Scenario Lab** | Live what-if sliders with instant delta vs base case; sensitivity heatmap across LF × ATF price |
-| **Save & Compare** | Store up to 6 named scenarios, compare side-by-side, export to CSV |
+| **Save & Compare** | Named scenarios saved to your organisation, compared side-by-side, exported to CSV |
 | **Portfolio Map** | Plotly geo map of your full route network, arcs colour-coded by profitability |
 | **DGCA Upload** | Drag-and-drop CSV/Excel with automatic column mapping UI |
 | **ML Forecasts** | ATF price forecasting, demand prediction with confidence bands, anomaly detection |
@@ -37,80 +37,95 @@ Built using real aviation economics frameworks, DGCA traffic data structures, an
 
 ---
 
-## Quick Start
-
-### 1. Clone the repository
+## Quick Start (local development)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/aerovia.git
-cd aerovia
-```
+git clone https://github.com/NakulHintya1411/AeroVia.git
+cd AeroVia
 
-### 2. Create a virtual environment
-
-```bash
-# Windows
 python -m venv .venv
-.venv\Scripts\activate
+# Windows:  .venv\Scriptsctivate
+# macOS / Linux:  source .venv/bin/activate
 
-# macOS / Linux
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and add your Anthropic API key:
-
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-```
-
-> Get your API key at [console.anthropic.com](https://console.anthropic.com). The AI Analyst page will work without it — you'll just see a prompt to add the key in the sidebar.
-
-### 5. Launch
-
-```bash
+pip install -r requirements-dev.txt
+cp .env.example .env          # then fill in ANTHROPIC_API_KEY if you want the AI Analyst
 streamlit run dashboard/app.py
 ```
 
-Open **http://localhost:8501** in your browser. Click **Load demo data** on the Portfolio page to explore without a real DGCA file.
+Open **http://localhost:8501**. On first launch there are no accounts: the sign-up form
+creates the first user and their organisation. Locally the database is a SQLite file at
+`instance/aerovia.db`, created and migrated automatically.
+
+---
+
+## Configuration
+
+All settings are environment variables (or `.env` locally). See `.env.example`.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | Postgres URL in production | SQLite at `instance/aerovia.db` |
+| `ANTHROPIC_API_KEY` | Server-side key for the AI Analyst. Users never see it. Empty = AI off | empty |
+| `CLAUDE_MODEL` | Model for the AI Analyst | `claude-opus-5-5` |
+| `CLAUDE_EFFORT` | Effort level: `low` / `medium` / `high` | `medium` |
+| `AEROVIA_ALLOW_SIGNUP` | Let anyone create an account. The first account is always allowed | `true` |
+| `AEROVIA_ENV` | `development` / `staging` / `production` | `development` |
+
+## Accounts, organisations and plans
+
+- Users sign up with email and password (bcrypt-hashed). Five wrong passwords lock the account for 15 minutes.
+- Each sign-up creates an **organisation**; the user is its owner. Saved scenarios and AI usage belong to the organisation.
+- Plans live in `config/plans.py` (Free / Pro / Team). They set the scenario limit and monthly AI Analyst messages. Billing isn't connected yet, so every organisation starts on Free.
+
+## Database migrations
+
+The schema is managed with Alembic. The app applies pending migrations on start-up; the Docker image runs
+`alembic upgrade head` before launching. After changing `db/models.py`:
+
+```bash
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+
+`tests/test_migrations.py` fails if models and migrations drift apart.
+
+## Tests
+
+```bash
+pytest -q                                              # SQLite
+TEST_DATABASE_URL=postgresql://user:pass@localhost/aerovia_test pytest -q   # Postgres (wiped per test)
+```
+
+GitHub Actions runs the suite against both SQLite and Postgres on every push and pull request.
+
+## Deploying
+
+The repo includes a `Dockerfile` and a Render Blueprint (`render.yaml`) for a staging environment:
+a Docker web service plus managed Postgres in Singapore. In Render choose **New → Blueprint**, select this
+repository, and enter `ANTHROPIC_API_KEY` when prompted. Staging has sign-up closed, so the first account you
+create becomes the owner. The Docker image works on any container host that sets `PORT` and `DATABASE_URL`.
 
 ---
 
 ## Project Structure
 
 ```
-aerovia/
+AeroVia/
 ├── dashboard/
-│   ├── app.py                  ← Streamlit entry point & navigation
-│   └── pages/
-│       ├── portfolio.py        ← Route network map + DGCA file upload
-│       ├── route_builder.py    ← Interactive route economics builder
-│       ├── scenario_lab.py     ← What-if sliders, comparisons, heatmap
-│       ├── ml_forecast.py      ← ATF + demand forecasts + anomaly detection
-│       └── ai_analyst.py       ← Claude-powered NLP analyst
-├── economics/
-│   ├── engine.py               ← RASK / CASK / BELF core engine
-│   └── scenario_store.py       ← Session-based scenario persistence
-├── ingestion/
-│   └── loader.py               ← DGCA CSV/Excel parser + demo data generator
-├── config/
-│   └── constants.py            ← Airport coords, airlines, aircraft, cost defaults
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+│   ├── app.py                ← Streamlit entry point (auth gate → Portfolio Overview)
+│   ├── pages/                ← Portfolio, Route Builder, Scenario Lab, ML Forecasts,
+│   │                           AI Analyst, Route Comparison, P&L Dashboard, Settings
+│   ├── utils/auth.py         ← Sign-in / sign-up screens and the per-page auth gate
+│   └── data/                 ← Bundled sample DGCA traffic file
+├── services/                 ← Business logic (no Streamlit): accounts, scenarios, usage, AI analyst
+├── db/                       ← SQLAlchemy models and session management
+├── migrations/               ← Alembic migrations
+├── economics/                ← RASK / CASK / BELF engine; scenario_store wrapper for pages
+├── ingestion/                ← DGCA CSV/Excel parser + demo data generator
+├── config/                   ← constants, settings (env vars), plans
+├── tests/                    ← pytest suite
+├── Dockerfile, render.yaml   ← Deployment
+└── .github/workflows/ci.yml  ← CI
 ```
 
 ---
@@ -156,7 +171,9 @@ No data is included in this repository. Use the built-in demo data generator to 
 - **Maps** — Plotly Geo (Scattergeo)
 - **Data** — pandas, numpy
 - **AI** — [Anthropic Claude API](https://anthropic.com)
-- **ML** — scikit-learn (anomaly detection), custom forecasting
+- **Forecasting** — numpy trend models and z-score anomaly detection
+- **Database** — SQLAlchemy + Alembic (Postgres in production, SQLite locally)
+- **Auth** — email + password with bcrypt, organisation-scoped data
 
 ---
 
