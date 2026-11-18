@@ -10,34 +10,38 @@ from dashboard._shared.ui import inject_css, sidebar_logo, page_header, section
 from dashboard._shared.styles import COLORS
 inject_css()
 from dashboard.utils.auth import require_auth, show_user_menu
-require_auth()
+user = require_auth()
 
 from config.constants import INDIAN_AIRPORTS, AIRCRAFT_TYPES
+from config.settings import get_settings
 from economics.engine import RouteInputs, compute_route_economics
 from economics.scenario_store import list_scenarios, get_scenario
+from services import ai_analyst, usage
+
+settings = get_settings()
+quota = usage.ai_quota(user.org_id)
 
 with st.sidebar:
     sidebar_logo()
-    st.markdown('<div class="sec-label" style="margin:18px 0 8px;padding:0 8px">API Key</div>', unsafe_allow_html=True)
-    kv = st.text_input("Anthropic API Key", type="password",
-                        value=st.session_state.get("api_key",""),
-                        placeholder="sk-ant-…", label_visibility="collapsed")
-    if kv:
-        st.session_state["api_key"] = kv
-        st.success("API key active")
+    show_user_menu()
+    st.markdown('<div class="sec-label" style="margin:18px 0 8px;padding:0 8px">AI usage this month</div>',
+                unsafe_allow_html=True)
+    if quota.limit is None:
+        st.caption(f"{quota.used} messages · unlimited plan")
     else:
-        st.markdown('<div class="info-panel" style="margin:0 8px">Get your key at<br>console.anthropic.com</div>', unsafe_allow_html=True)
+        st.progress(min(1.0, quota.used / quota.limit) if quota.limit else 1.0)
+        st.caption(f"{quota.used} of {quota.limit} messages used")
     st.markdown('<div class="sidebar-footer"><div class="sidebar-version">v2.0 · Indian Aviation</div></div>', unsafe_allow_html=True)
 
 page_header("Intelligence Layer", "AI Analyst",
             "Ask anything about route economics, yield strategy, competitive dynamics, or market outlook.")
 
-C = COLORS
-SYSTEM_PROMPT = """You are AeroVia's AI Aviation Analyst — an expert in Indian domestic airline economics with deep command of RASK/CASK/BELF frameworks, ATF pricing dynamics, DGCA regulations, yield management, and Indian aviation market structure (IndiGo, Air India, SpiceJet, Akasa, UDAN scheme, slot constraints at metro airports).
+if not settings.ai_configured:
+    st.info("The AI Analyst isn't switched on for this workspace yet. "
+            "An administrator needs to set the server's ANTHROPIC_API_KEY.")
 
-When route data is provided in the context below, reference it directly in your analysis.
-Be concise, data-driven, and actionable. Use ₹ for currency. Format key numbers clearly (₹12.5L, 82% LF, 14.2p RASK).
-For route analyses structure your response as: Revenue Assessment → Cost Drivers → Profitability Verdict → Key Risks → Recommendations."""
+C = COLORS
+
 
 def _ctx(econ=None, sc_name=None):
     parts = []
@@ -50,17 +54,6 @@ def _ctx(econ=None, sc_name=None):
             parts.append(f"Scenario '{sc_name}': {e['origin']}→{e['destination']} | Margin {e['margin_pct']:.1f}% | RASK {e['rask']:.1f}p | CASK {e['cask']:.1f}p")
     return "\n\n".join(parts)
 
-def _call(messages, ctx):
-    try:
-        import anthropic
-        key = st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY","")
-        client = anthropic.Anthropic(api_key=key)
-        sys_p = SYSTEM_PROMPT + (f"\n\n--- LIVE ROUTE DATA ---\n{ctx}" if ctx else "")
-        r = client.messages.create(model="claude-sonnet-4-20250514", max_tokens=1024,
-                                    system=sys_p, messages=messages)
-        return r.content[0].text
-    except Exception as e:
-        return f"⚠ Error: {e}"
 
 section("Context")
 ctx1, ctx2 = st.columns(2)
@@ -104,21 +97,27 @@ for msg in st.session_state.ai_msgs:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-user_in = st.chat_input("Ask about routes, yields, ATF impact, competitive positioning…")
+user_in = st.chat_input("Ask about routes, yields, ATF impact, competitive positioning…",
+                        disabled=not settings.ai_configured or quota.exhausted)
 if "ai_p" in st.session_state:
     user_in = st.session_state.pop("ai_p")
 
-if user_in:
-    if not (st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")):
-        st.warning("Add your Anthropic API key in the sidebar to use the AI Analyst.")
-    else:
-        st.session_state.ai_msgs.append({"role":"user","content":user_in})
-        with st.chat_message("user"): st.write(user_in)
-        with st.chat_message("assistant"):
-            with st.spinner(""):
-                resp = _call(st.session_state.ai_msgs, ctx_str)
+if quota.exhausted:
+    st.warning(f"Your organisation has used all {quota.limit} AI Analyst messages for this month.")
+elif user_in and settings.ai_configured:
+    pending = st.session_state.ai_msgs + [{"role": "user", "content": user_in}]
+    with st.chat_message("user"):
+        st.write(user_in)
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Analysing…"):
+                resp = ai_analyst.ask(user.org_id, user.user_id, pending, ctx_str)
+        except ai_analyst.AnalystError as e:
+            st.error(str(e))
+        else:
             st.write(resp)
-        st.session_state.ai_msgs.append({"role":"assistant","content":resp})
+            st.session_state.ai_msgs = pending + [{"role": "assistant", "content": resp}]
+            st.rerun()
 
 if st.session_state.ai_msgs:
     if st.button("Clear conversation"):

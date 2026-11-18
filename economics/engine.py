@@ -79,6 +79,11 @@ class RouteEconomics:
         return asdict(self)
 
 
+def _pick(override, default):
+    """Use the override when one was given, including an explicit 0."""
+    return default if override is None else override
+
+
 def compute_route_economics(inputs: RouteInputs, defaults: dict = None) -> RouteEconomics:
     d = {**DEFAULT_COST_ASSUMPTIONS, **(defaults or {})}
     ac = AIRCRAFT_TYPES[inputs.aircraft_type]
@@ -93,25 +98,25 @@ def compute_route_economics(inputs: RouteInputs, defaults: dict = None) -> Route
     rpk = ask * inputs.load_factor
 
     # ── Revenue ──────────────────────────────────────────────────────────────
-    yield_inr_km = inputs.yield_inr_per_km or d["avg_yield_inr_per_km"]
+    yield_inr_km = _pick(inputs.yield_inr_per_km, d["avg_yield_inr_per_km"])
     total_revenue = rpk * yield_inr_km
     rask = (total_revenue / ask) * 100  # paise per ASK
 
     # ── Costs ────────────────────────────────────────────────────────────────
-    atf = inputs.atf_price_inr_per_litre or d["atf_price_inr_per_litre"]
+    atf = _pick(inputs.atf_price_inr_per_litre, d["atf_price_inr_per_litre"])
     fuel_litres = ac["fuel_burn_kg_hr"] * flight_time_hr * freq * 0.8  # kg→litre ~0.8
     fuel_cost = fuel_litres * atf
 
-    crew_pct = inputs.crew_cost_pct or d["crew_cost_pct_of_revenue"]
+    crew_pct = _pick(inputs.crew_cost_pct, d["crew_cost_pct_of_revenue"])
     crew_cost = total_revenue * crew_pct
 
-    maint_per_fh = inputs.maintenance_cost_per_fh or d["maintenance_cost_per_flight_hour"]
+    maint_per_fh = _pick(inputs.maintenance_cost_per_fh, d["maintenance_cost_per_flight_hour"])
     maintenance_cost = maint_per_fh * flight_time_hr * freq
 
-    airport_per_sector = inputs.airport_charges_per_sector or d["airport_charges_per_sector"]
+    airport_per_sector = _pick(inputs.airport_charges_per_sector, d["airport_charges_per_sector"])
     airport_cost = airport_per_sector * freq
 
-    overhead_pct = inputs.overhead_pct or d["overhead_pct_of_revenue"]
+    overhead_pct = _pick(inputs.overhead_pct, d["overhead_pct_of_revenue"])
     overhead_cost = total_revenue * overhead_pct
 
     total_cost = fuel_cost + crew_cost + maintenance_cost + airport_cost + overhead_cost

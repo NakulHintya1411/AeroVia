@@ -10,7 +10,15 @@ from dashboard._shared.ui import inject_css, sidebar_logo, page_header, section
 from dashboard._shared.styles import COLORS
 from dashboard.utils.auth import require_auth, show_user_menu, logout
 inject_css()
-require_auth()
+user = require_auth()
+
+import html
+from config.plans import get_plan
+from config.settings import get_settings
+from services import accounts, usage
+
+plan = get_plan(user.plan)
+esc = html.escape
 
 with st.sidebar:
     sidebar_logo()
@@ -19,64 +27,71 @@ with st.sidebar:
                 unsafe_allow_html=True)
 
 page_header("Configuration", "Settings",
-            "Manage your account, API keys, cost defaults, and data preferences.")
+            "Manage your account, organisation, usage, cost defaults, and saved data.")
 
 C = COLORS
 
 # ── Account ───────────────────────────────────────────────────────────────────
 section("Account")
-a1, a2 = st.columns(2)
+a1, a2, a3 = st.columns(3)
 with a1:
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-label">Signed in as</div>
-        <div class="kpi-value" style="font-size:18px">{st.session_state.get('user_name','User')}</div>
-        <div class="kpi-sub">@{st.session_state.get('username','')}</div>
+        <div class="kpi-value" style="font-size:18px">{esc(user.name)}</div>
+        <div class="kpi-sub">{esc(user.email)}</div>
     </div>""", unsafe_allow_html=True)
 with a2:
-    st.markdown("""
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">Organisation</div>
+        <div class="kpi-value" style="font-size:18px">{esc(user.org_name)}</div>
+        <div class="kpi-sub">Your role: {esc(user.role.title())}</div>
+    </div>""", unsafe_allow_html=True)
+with a3:
+    scen_limit = "Unlimited" if plan.max_scenarios is None else f"{plan.max_scenarios}"
+    st.markdown(f"""
     <div class="kpi-card kv-accent">
         <div class="kpi-label">Plan</div>
-        <div class="kpi-value" style="font-size:18px">Standard</div>
-        <div class="kpi-sub">All features unlocked</div>
+        <div class="kpi-value" style="font-size:18px">{esc(plan.label)}</div>
+        <div class="kpi-sub">{scen_limit} scenarios · {plan.ai_messages_per_month or "Unlimited"} AI messages/month</div>
     </div>""", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("Sign Out of AeroVia", key="settings_logout"):
     logout()
 
-# ── AI Analyst API Key ────────────────────────────────────────────────────────
-section("AI Analyst — Anthropic API Key")
-st.markdown('<div class="info-panel">The AI Analyst uses Claude by Anthropic. Add your API key to enable route analysis, yield strategy advice, and market insights in natural language. Get your key at <strong>console.anthropic.com</strong></div>',
-            unsafe_allow_html=True)
-st.markdown("<br>", unsafe_allow_html=True)
+# ── Members ───────────────────────────────────────────────────────────────────
+section("Members")
+members = accounts.list_members(user.org_id)
+st.dataframe(
+    [{"Name": m["name"], "Email": m["email"], "Role": m["role"].title(),
+      "Joined": m["joined"].strftime("%d %b %Y") if m["joined"] else ""} for m in members],
+    use_container_width=True, hide_index=True,
+)
+st.caption("Inviting teammates is coming soon.")
 
-current_key = st.session_state.get("api_key", "")
-col_key, col_save = st.columns([4, 1])
-with col_key:
-    new_key = st.text_input(
-        "API Key",
-        value=current_key,
-        type="password",
-        placeholder="sk-ant-api03-…",
-        label_visibility="collapsed",
-        help="Your key is stored only in your browser session — never saved to disk or GitHub"
-    )
-with col_save:
-    if st.button("Save Key", use_container_width=True):
-        if new_key.startswith("sk-ant-"):
-            st.session_state["api_key"] = new_key
-            st.success("API key saved for this session")
-        elif new_key == "":
-            st.session_state.pop("api_key", None)
-            st.info("API key cleared")
-        else:
-            st.error("Invalid key format — should start with sk-ant-")
-
-if current_key:
-    st.caption(f"✓ Key active · {current_key[:12]}…{current_key[-4:]} · AI Analyst is ready")
-else:
-    st.caption("No API key set — AI Analyst will prompt for a key when you visit it")
+# ── AI Analyst usage ──────────────────────────────────────────────────────────
+section("AI Analyst")
+settings = get_settings()
+quota = usage.ai_quota(user.org_id)
+u1, u2 = st.columns(2)
+with u1:
+    limit_txt = "Unlimited" if quota.limit is None else f"of {quota.limit}"
+    st.markdown(f"""
+    <div class="kpi-card {'kv-negative' if quota.exhausted else ''}">
+        <div class="kpi-label">Messages this month</div>
+        <div class="kpi-value">{quota.used}</div>
+        <div class="kpi-sub">{limit_txt} · resets on the 1st</div>
+    </div>""", unsafe_allow_html=True)
+with u2:
+    status = "Ready" if settings.ai_configured else "Not configured"
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">Status</div>
+        <div class="kpi-value" style="font-size:18px">{status}</div>
+        <div class="kpi-sub">Model: {esc(settings.claude_model)}</div>
+    </div>""", unsafe_allow_html=True)
 
 # ── Default Cost Assumptions ──────────────────────────────────────────────────
 section("Default Cost Assumptions")
@@ -143,44 +158,44 @@ with col_reset:
 
 # ── Data & Scenarios ──────────────────────────────────────────────────────────
 section("Data & Scenarios")
-from economics.scenario_store import list_scenarios, _get_store
+from economics.scenario_store import list_scenarios, delete_scenario, clear_scenarios
 
 saved = list_scenarios()
+limit = plan.max_scenarios
+near_full = limit is not None and len(saved) >= limit - 1
 sc1, sc2 = st.columns(2)
 with sc1:
     st.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-label">Saved Scenarios</div>
         <div class="kpi-value">{len(saved)}</div>
-        <div class="kpi-sub">Max 6 stored at a time</div>
+        <div class="kpi-sub">Shared with everyone in {esc(user.org_name)}</div>
     </div>""", unsafe_allow_html=True)
 with sc2:
     st.markdown(f"""
-    <div class="kpi-card {'kv-negative' if len(saved) >= 5 else ''}">
+    <div class="kpi-card {'kv-negative' if near_full else ''}">
         <div class="kpi-label">Storage Used</div>
-        <div class="kpi-value">{len(saved)}/6</div>
-        <div class="kpi-sub">{'Almost full — export before saving more' if len(saved) >= 5 else 'Space available'}</div>
+        <div class="kpi-value">{len(saved)}/{'∞' if limit is None else limit}</div>
+        <div class="kpi-sub">{'Almost full — delete or upgrade to save more' if near_full else 'Space available'}</div>
     </div>""", unsafe_allow_html=True)
 
 if saved:
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("Saved scenarios:")
-    for sc in saved:
+    for i, sc in enumerate(saved):
         c1, c2 = st.columns([5, 1])
         with c1:
-            st.markdown(f"<div style='font-size:13px;color:var(--text-2);padding:4px 0'>{sc}</div>",
+            st.markdown(f"<div style='font-size:13px;color:var(--text-2);padding:4px 0'>{esc(sc)}</div>",
                         unsafe_allow_html=True)
         with c2:
-            if st.button("✕", key=f"del_{sc}", help=f"Delete {sc}"):
-                from economics.scenario_store import delete_scenario
+            if st.button("✕", key=f"del_{i}", help=f"Delete {sc}"):
                 delete_scenario(sc)
                 st.rerun()
 
-    if st.button("Clear All Scenarios", key="clear_all"):
-        store = _get_store()
-        store.clear()
-        st.success("All scenarios cleared")
-        st.rerun()
+    if user.role in ("owner", "admin"):
+        if st.button("Clear All Scenarios", key="clear_all"):
+            clear_scenarios()
+            st.rerun()
 
 # ── About ─────────────────────────────────────────────────────────────────────
 section("About AeroVia")

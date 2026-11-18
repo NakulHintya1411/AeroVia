@@ -20,7 +20,7 @@ from config.constants import (INDIAN_AIRPORTS, INTERNATIONAL_AIRPORTS, AIRLINES,
                                AIRLINE_AIRCRAFT, get_airline_airports, get_airline_intl_airports,
                                classify_route, YIELD_BENCHMARKS)
 from economics.engine import RouteInputs, compute_route_economics
-from economics.scenario_store import save_scenario, list_scenarios, compare_scenarios
+from economics.scenario_store import save_scenario, list_scenarios, compare_scenarios, ScenarioError
 
 with st.sidebar:
     sidebar_logo()
@@ -264,8 +264,11 @@ with s1:
     )
 with s2:
     if st.button("Save", use_container_width=True):
-        save_scenario(sc_name, vars(inputs), econ.to_dict())
-        st.success("Saved!")
+        try:
+            save_scenario(sc_name, vars(inputs), econ.to_dict())
+            st.success("Saved!")
+        except ScenarioError as e:
+            st.error(str(e))
 with s3:
     saved = list_scenarios()
     scenarios = compare_scenarios(saved) if saved else None
