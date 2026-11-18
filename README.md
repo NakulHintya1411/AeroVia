@@ -70,12 +70,42 @@ All settings are environment variables (or `.env` locally). See `.env.example`.
 | `CLAUDE_EFFORT` | Effort level: `low` / `medium` / `high` | `medium` |
 | `AEROVIA_ALLOW_SIGNUP` | Let anyone create an account. The first account is always allowed | `true` |
 | `AEROVIA_ENV` | `development` / `staging` / `production` | `development` |
+| `AEROVIA_TRIAL_DAYS` | Days of free Pro trial for new organisations (0 = none) | `14` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay API keys (test mode outside production). Empty = billing off | empty |
+| `RAZORPAY_PLAN_PRO`, `RAZORPAY_PLAN_TEAM` | Razorpay plan IDs for the paid plans | empty |
+| `RAZORPAY_WEBHOOK_SECRET` | Secret for verifying Razorpay webhooks (API service) | empty |
+| `AEROVIA_SERVICE` | Docker only: `web` (Streamlit) or `api` (webhooks) | `web` |
 
 ## Accounts, organisations and plans
 
 - Users sign up with email and password (bcrypt-hashed). Five wrong passwords lock the account for 15 minutes.
 - Each sign-up creates an **organisation**; the user is its owner. Saved scenarios and AI usage belong to the organisation.
-- Plans live in `config/plans.py` (Free / Pro / Team). They set the scenario limit and monthly AI Analyst messages. Billing isn't connected yet, so every organisation starts on Free.
+- Plans live in `config/plans.py` (Free / Pro / Team). They set the scenario limit and monthly AI Analyst messages.
+- New organisations get a free Pro trial (`AEROVIA_TRIAL_DAYS`, default 14 days, no card needed), then drop to Free unless they subscribe.
+
+## Billing (Razorpay)
+
+Owners and admins subscribe on the **Billing** page. AeroVia creates a Razorpay subscription and sends them to
+Razorpay's hosted payment page; card/UPI details never touch AeroVia. An organisation's plan is the best of its
+base plan, an active trial, and any subscription in `authenticated`, `active` or `pending` (renewal retrying).
+Cancelling takes effect at the end of the paid period.
+
+Subscription state always comes from Razorpay's API: the Billing page refreshes it on load, and webhooks (sent to the
+separate API service, because Streamlit can't receive them) trigger the same refresh. Webhooks are verified with
+HMAC-SHA256 and de-duplicated by event ID.
+
+**Setup (test mode first):**
+
+1. In the Razorpay Dashboard switch to **Test Mode**, then create two monthly plans under
+   **Subscriptions → Plans** (Pro and Team, at your prices). Copy their `plan_...` IDs into
+   `RAZORPAY_PLAN_PRO` / `RAZORPAY_PLAN_TEAM`.
+2. **Account & Settings → API Keys**: generate a test key pair → `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`.
+3. **Account & Settings → Webhooks**: add `https://<your API host>/webhooks/razorpay`, choose a secret
+   (→ `RAZORPAY_WEBHOOK_SECRET`) and tick all `subscription.*` events.
+4. Restart the app. Prices on the Billing page are read from the Razorpay plans.
+
+Locally, the Billing page works without webhooks (it re-syncs from Razorpay when opened). To test webhooks
+locally, run the API (`uvicorn api.main:app --port 8000`) and expose it with a tunnel such as ngrok.
 
 ## Database migrations
 
@@ -100,10 +130,14 @@ GitHub Actions runs the suite against both SQLite and Postgres on every push and
 
 ## Deploying
 
-The repo includes a `Dockerfile` and a Render Blueprint (`render.yaml`) for a staging environment:
-a Docker web service plus managed Postgres in Singapore. In Render choose **New → Blueprint**, select this
-repository, and enter `ANTHROPIC_API_KEY` when prompted. Staging has sign-up closed, so the first account you
-create becomes the owner. The Docker image works on any container host that sets `PORT` and `DATABASE_URL`.
+One Docker image runs both services: `AEROVIA_SERVICE=web` (the Streamlit app, default) and
+`AEROVIA_SERVICE=api` (the webhook API, health check `/healthz`). Each container applies migrations on start;
+a Postgres advisory lock keeps two services from migrating at the same time.
+
+The Render Blueprint (`render.yaml`) sets up staging: both services plus managed Postgres in Singapore. In Render
+choose **New → Blueprint**, select this repository, and fill in the keys it asks for. Staging has sign-up closed,
+so the first account you create becomes the owner. Then add the Razorpay webhook (Billing step 3) using the API
+service's URL. The image works on any container host that sets `PORT` and `DATABASE_URL`.
 
 ---
 
@@ -114,16 +148,18 @@ AeroVia/
 ├── dashboard/
 │   ├── app.py                ← Streamlit entry point (auth gate → Portfolio Overview)
 │   ├── pages/                ← Portfolio, Route Builder, Scenario Lab, ML Forecasts,
-│   │                           AI Analyst, Route Comparison, P&L Dashboard, Settings
+│   │                           AI Analyst, Route Comparison, P&L Dashboard, Settings, Billing
 │   ├── utils/auth.py         ← Sign-in / sign-up screens and the per-page auth gate
 │   └── data/                 ← Bundled sample DGCA traffic file
-├── services/                 ← Business logic (no Streamlit): accounts, scenarios, usage, AI analyst
+├── services/                 ← Business logic (no Streamlit): accounts, billing, scenarios, usage, AI analyst
+├── api/                      ← FastAPI service: Razorpay webhooks, /healthz
 ├── db/                       ← SQLAlchemy models and session management
 ├── migrations/               ← Alembic migrations
 ├── economics/                ← RASK / CASK / BELF engine; scenario_store wrapper for pages
 ├── ingestion/                ← DGCA CSV/Excel parser + demo data generator
 ├── config/                   ← constants, settings (env vars), plans
 ├── tests/                    ← pytest suite
+├── scripts/                  ← Container start-up and health check
 ├── Dockerfile, render.yaml   ← Deployment
 └── .github/workflows/ci.yml  ← CI
 ```

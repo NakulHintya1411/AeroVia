@@ -32,7 +32,10 @@ class Organization(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    # Base plan, set by an administrator (e.g. a complimentary account). Paid plans
+    # come from `subscriptions`; see services.billing.effective_plan_key().
     plan: Mapped[str] = mapped_column(String(20), default="free")
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
@@ -82,6 +85,43 @@ class Scenario(Base):
     economics: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Subscription(Base):
+    """A paid subscription at the payment provider (Razorpay). One row per provider subscription."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(20), default="razorpay")
+    provider_subscription_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    provider_plan_id: Mapped[str] = mapped_column(String(64))
+    plan_key: Mapped[str] = mapped_column(String(20))  # pro | team
+    # Provider status: created, authenticated, active, pending, halted, cancelled,
+    # completed, expired, paused.
+    status: Mapped[str] = mapped_column(String(20), default="created")
+    current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    checkout_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WebhookEvent(Base):
+    """Provider webhook deliveries already processed, so retries aren't applied twice."""
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (UniqueConstraint("provider", "event_id", name="uq_webhook_provider_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    event_id: Mapped[str] = mapped_column(String(100))
+    event_type: Mapped[str] = mapped_column(String(60))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class UsageEvent(Base):

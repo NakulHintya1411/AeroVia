@@ -42,7 +42,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Check every module compiles
-        run: python -m compileall -q config db economics ingestion services dashboard migrations
+        run: python -m compileall -q api config db economics ingestion services dashboard migrations scripts
 
       - name: Run tests
         env:

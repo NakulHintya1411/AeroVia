@@ -58,6 +58,7 @@ with a3:
     </div>""", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
+st.page_link("pages/8_Billing.py", label="Manage plan & billing →")
 if st.button("Sign Out of AeroVia", key="settings_logout"):
     logout()
 
