@@ -28,6 +28,12 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("AEROVIA_ALLOW_SIGNUP", "true")
     monkeypatch.delenv("CLAUDE_MODEL", raising=False)
     monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
+    # New orgs start on Free in tests unless a test opts into a trial.
+    monkeypatch.setenv("AEROVIA_TRIAL_DAYS", "0")
+    # Never use real Razorpay credentials from .env; billing tests set fakes.
+    for var in ("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
+                "RAZORPAY_PLAN_PRO", "RAZORPAY_PLAN_TEAM"):
+        monkeypatch.setenv(var, "")
     get_settings.cache_clear()
     reset_engine()
 

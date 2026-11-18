@@ -17,14 +17,17 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-RUN useradd --create-home --uid 10001 app && chown -R app /app
+# Strip Windows line endings in case the build context came from a CRLF checkout.
+RUN sed -i 's/\r$//' scripts/start.sh \
+    && useradd --create-home --uid 10001 app && chown -R app /app
 USER app
 
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8501\")}/_stcore/health', timeout=4)"
+  CMD ["python", "scripts/healthcheck.py"]
 
-# Apply database migrations, then start the app on the port the host provides.
-# `exec` makes Streamlit PID 1 so it receives SIGTERM and shuts down cleanly on redeploys.
-CMD ["sh", "-c", "alembic upgrade head && exec streamlit run dashboard/app.py --server.port=\"${PORT}\" --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false"]
+# One image, two services: AEROVIA_SERVICE=web (default, Streamlit) or api (webhooks).
+# start.sh applies migrations, then `exec`s the server so it is PID 1 and receives
+# SIGTERM for clean shutdowns on redeploys.
+CMD ["sh", "scripts/start.sh"]

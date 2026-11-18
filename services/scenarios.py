@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 from config.plans import get_plan
 from db import session_scope
 from db.models import Organization, Scenario
+from services import billing
 
 MAX_NAME_LENGTH = 200
 
@@ -48,7 +49,7 @@ def save(org_id: int, user_id: Optional[int], name: str, inputs: dict, economics
         org = s.get(Organization, org_id)
         if org is None:
             raise ScenarioError("Organisation not found.")
-        plan = get_plan(org.plan)
+        plan = get_plan(billing.effective_plan_key(s, org))
         if plan.max_scenarios is not None:
             count = s.scalar(select(func.count(Scenario.id)).where(Scenario.org_id == org_id)) or 0
             if count >= plan.max_scenarios:

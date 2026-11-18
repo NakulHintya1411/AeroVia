@@ -1,7 +1,13 @@
-# Render Blueprint for a staging deployment: a Docker web service plus Postgres.
-# In Render: New → Blueprint → pick this repo. You'll be asked for ANTHROPIC_API_KEY.
+# Render Blueprint for a staging deployment: the Streamlit app, the webhook API,
+# and Postgres. In Render: New → Blueprint → pick this repo. You'll be asked for
+# the values marked `sync: false` (API keys, Razorpay test keys and plan IDs).
+#
 # Sign-up is closed (AEROVIA_ALLOW_SIGNUP=false): the first account you create
 # becomes the owner; nobody else can register until you open it.
+#
+# After the first deploy, add a Razorpay webhook (test mode) pointing at
+#   https://<aerovia-api-staging host>/webhooks/razorpay
+# with the same secret you set as RAZORPAY_WEBHOOK_SECRET. See README → Billing.
 
 services:
   - type: web
@@ -10,6 +16,8 @@ services:
     region: singapore
     healthCheckPath: /_stcore/health
     envVars:
+      - key: AEROVIA_SERVICE
+        value: web
       - key: DATABASE_URL
         fromDatabase:
           name: aerovia-staging-db
@@ -20,6 +28,39 @@ services:
         value: staging
       - key: AEROVIA_ALLOW_SIGNUP
         value: "false"
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_PLAN_PRO
+        sync: false
+      - key: RAZORPAY_PLAN_TEAM
+        sync: false
+
+  - type: web
+    name: aerovia-api-staging
+    runtime: docker
+    region: singapore
+    healthCheckPath: /healthz
+    envVars:
+      - key: AEROVIA_SERVICE
+        value: api
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aerovia-staging-db
+          property: connectionString
+      - key: AEROVIA_ENV
+        value: staging
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_PLAN_PRO
+        sync: false
+      - key: RAZORPAY_PLAN_TEAM
+        sync: false
 
 databases:
   - name: aerovia-staging-db

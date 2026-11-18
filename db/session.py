@@ -20,6 +20,8 @@ _engine: Optional[Engine] = None
 _session_factory: Optional[sessionmaker[Session]] = None
 _migrated_url: Optional[str] = None
 
+MIGRATION_LOCK_KEY = 72_450_001  # arbitrary, fixed id for pg_advisory_xact_lock
+
 
 def _make_engine(url: str) -> Engine:
     if url.startswith("sqlite"):
@@ -93,6 +95,12 @@ def init_db() -> None:
 
     cfg = alembic_config(url)
     with engine.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            # The web app and the API service may start together; make them take
+            # turns so only one applies migrations. Released at commit.
+            from sqlalchemy import text
+
+            connection.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": MIGRATION_LOCK_KEY})
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
     _migrated_url = url

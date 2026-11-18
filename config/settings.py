@@ -41,6 +41,14 @@ def normalise_database_url(url: str) -> str:
     return url
 
 
+def _int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -49,10 +57,27 @@ class Settings:
     claude_effort: str
     allow_signup: bool
     environment: str
+    # Billing (Razorpay)
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    razorpay_plan_pro: str = ""
+    razorpay_plan_team: str = ""
+    trial_days: int = 14
 
     @property
     def ai_configured(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    @property
+    def razorpay_plan_ids(self) -> dict[str, str]:
+        """Plan key → Razorpay plan ID, for the paid plans that are set up."""
+        ids = {"pro": self.razorpay_plan_pro, "team": self.razorpay_plan_team}
+        return {k: v for k, v in ids.items() if v}
+
+    @property
+    def billing_configured(self) -> bool:
+        return bool(self.razorpay_key_id and self.razorpay_key_secret and self.razorpay_plan_ids)
 
 
 @lru_cache(maxsize=1)
@@ -67,4 +92,10 @@ def get_settings() -> Settings:
         claude_effort=os.environ.get("CLAUDE_EFFORT", "").strip() or "medium",
         allow_signup=_bool("AEROVIA_ALLOW_SIGNUP", True),
         environment=os.environ.get("AEROVIA_ENV", "development").strip() or "development",
+        razorpay_key_id=os.environ.get("RAZORPAY_KEY_ID", "").strip(),
+        razorpay_key_secret=os.environ.get("RAZORPAY_KEY_SECRET", "").strip(),
+        razorpay_webhook_secret=os.environ.get("RAZORPAY_WEBHOOK_SECRET", "").strip(),
+        razorpay_plan_pro=os.environ.get("RAZORPAY_PLAN_PRO", "").strip(),
+        razorpay_plan_team=os.environ.get("RAZORPAY_PLAN_TEAM", "").strip(),
+        trial_days=max(0, _int("AEROVIA_TRIAL_DAYS", 14)),
     )

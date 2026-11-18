@@ -52,7 +52,9 @@ def count_this_month(org_id: int, kind: str, now: Optional[datetime] = None) -> 
 
 
 def ai_quota(org_id: int) -> Quota:
+    from services import billing
+
     with session_scope() as s:
         org = s.get(Organization, org_id)
-        plan = get_plan(org.plan if org else None)
+        plan = get_plan(billing.effective_plan_key(s, org) if org else None)
     return Quota(used=count_this_month(org_id, AI_MESSAGE), limit=plan.ai_messages_per_month)
