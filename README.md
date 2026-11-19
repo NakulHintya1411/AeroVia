@@ -100,8 +100,9 @@ HMAC-SHA256 and de-duplicated by event ID.
    **Subscriptions → Plans** (Pro and Team, at your prices). Copy their `plan_...` IDs into
    `RAZORPAY_PLAN_PRO` / `RAZORPAY_PLAN_TEAM`.
 2. **Account & Settings → API Keys**: generate a test key pair → `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`.
-3. **Account & Settings → Webhooks**: add `https://<your API host>/webhooks/razorpay`, choose a secret
-   (→ `RAZORPAY_WEBHOOK_SECRET`) and tick all `subscription.*` events.
+3. **Account & Settings → Webhooks**: add `https://<your API host>/webhooks/razorpay`, set the secret to the
+   API service's `RAZORPAY_WEBHOOK_SECRET` (on Render it's generated for you; elsewhere choose a long random
+   value) and tick all `subscription.*` events.
 4. Restart the app. Prices on the Billing page are read from the Razorpay plans.
 
 Locally, the Billing page works without webhooks (it re-syncs from Razorpay when opened). To test webhooks
@@ -109,8 +110,8 @@ locally, run the API (`uvicorn api.main:app --port 8000`) and expose it with a t
 
 ## Database migrations
 
-The schema is managed with Alembic. The app applies pending migrations on start-up; the Docker image runs
-`alembic upgrade head` before launching. After changing `db/models.py`:
+The schema is managed with Alembic. The app and the API apply pending migrations on start-up (in Docker,
+`scripts/start.sh` does it before launching). After changing `db/models.py`:
 
 ```bash
 alembic revision --autogenerate -m "describe the change"
@@ -134,10 +135,17 @@ One Docker image runs both services: `AEROVIA_SERVICE=web` (the Streamlit app, d
 `AEROVIA_SERVICE=api` (the webhook API, health check `/healthz`). Each container applies migrations on start;
 a Postgres advisory lock keeps two services from migrating at the same time.
 
-The Render Blueprint (`render.yaml`) sets up staging: both services plus managed Postgres in Singapore. In Render
-choose **New → Blueprint**, select this repository, and fill in the keys it asks for. Staging has sign-up closed,
-so the first account you create becomes the owner. Then add the Razorpay webhook (Billing step 3) using the API
-service's URL. The image works on any container host that sets `PORT` and `DATABASE_URL`.
+The Render Blueprint (`render.yaml`) sets up staging on Render's **free plan**: both services plus Postgres in
+Singapore. In Render choose **New → Blueprint**, select this repository, and fill in the keys it asks for. Staging
+has sign-up closed, so the first account you create becomes the owner. Then add the Razorpay webhook (Billing
+step 3) using the API service's URL and its generated `RAZORPAY_WEBHOOK_SECRET`.
+
+Free-plan limits: services sleep after 15 minutes without traffic and take about a minute to wake (a webhook
+wakes the API too), and **the free Postgres database expires 30 days after creation** (14-day grace to upgrade,
+then it's deleted). Both services peaked under 200 MB of the 512 MB free-instance memory in testing. For
+production, set paid `plan` values in `render.yaml`; if `plan` is omitted, Render defaults to paid instances.
+
+The image works on any container host that sets `PORT` and `DATABASE_URL`.
 
 ---
 
